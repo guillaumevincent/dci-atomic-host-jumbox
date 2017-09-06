@@ -1,0 +1,151 @@
+---
+- name: check
+  hosts: localhost
+  tasks:
+    - name: stat dcirc.sh file
+      stat:
+        path: dcirc.sh
+      register: dci_env_file
+
+    - name: stat openrc.sh file
+      stat:
+        path: openrc.sh
+      register: openrc
+
+    - name: ensure required env files are defined
+      fail:
+        msg: "dcirc.sh file or openrc.sh are required. See README.md"
+      when: (dci_env_file.stat.exists == False) or (openrc.stat.exists == False)
+
+- name: setup credentials
+  hosts: localhost
+  tasks:
+    - name: add jumpbox vm in host
+      add_host:
+        name: "jumpbox"
+        ansible_ssh_host: "{{ SSH_HOST }}"
+        ansible_ssh_port: "{{ SSH_PORT | default(22) }}"
+        ansible_ssh_user: "{{ SSH_USER | default(centos) }}"
+        ansible_ssh_private_key_file: "{{ SSH_PRIVATE_KEY_FILE }}"
+
+    - name: delete jumpbox ssh key in OSP
+      os_keypair:
+        auth:
+          auth_url: "{{ lookup('env', 'OS_AUTH_URL') }}"
+          username: "{{ lookup('env', 'OS_USERNAME') }}"
+          password: "{{ lookup('env', 'OS_PASSWORD') }}"
+          user_domain_name:  "{{ lookup('env', 'OS_USER_DOMAIN_NAME') }}"
+          project_domain_name:  "{{ lookup('env', 'OS_PROJECT_DOMAIN_NAME') }}"
+          project_name: "{{ lookup('env', 'OS_PROJECT_NAME') }}"
+        state: absent
+        name: jumpbox
+
+    - name: create key in OSP for jumpbox
+      os_keypair:
+        auth:
+          auth_url: "{{ lookup('env', 'OS_AUTH_URL') }}"
+          username: "{{ lookup('env', 'OS_USERNAME') }}"
+          password: "{{ lookup('env', 'OS_PASSWORD') }}"
+          user_domain_name:  "{{ lookup('env', 'OS_USER_DOMAIN_NAME') }}"
+          project_domain_name:  "{{ lookup('env', 'OS_PROJECT_DOMAIN_NAME') }}"
+          project_name: "{{ lookup('env', 'OS_PROJECT_NAME') }}"
+        state: present
+        name: jumpbox
+        public_key_file: "{{ SSH_PRIVATE_KEY_FILE }}.pub"
+
+- name: create jumpbox
+  hosts: localhost
+  tasks:
+    - name: create ssh security group
+      os_security_group:
+        state: present
+        name: ssh
+
+    - name: edit ssh security group
+      os_security_group_rule:
+        protocol: tcp
+        security_group: ssh
+        port_range_min: 22
+        port_range_max: 22
+        remote_ip_prefix: 0.0.0.0/0
+
+    - name: create jumpbox
+      os_server:
+        state: present
+        name: jumpbox
+        image: CentOS-7-x86_64-GenericCloud-1701
+        key_name: jumpbox
+        timeout: 200
+        flavor: m1.small
+        floating_ips:
+          - "{{ SSH_HOST }}"
+        volume_size: 20
+        security_groups: ['ssh']
+        network: local
+
+    - name: wait for ssh on jumpbox
+      command: >
+        ssh -oBatchMode=yes -oStrictHostKeyChecking=no
+        centos@{{ hostvars.jumpbox.ansible_ssh_host }} true
+      register: result
+      until: result|success
+      retries: 10
+      delay: 6
+
+- name: setup jumbox centos
+  hosts: jumpbox
+  become: yes
+  become_user: centos
+  tasks:
+    - name: git clone dci-atomic-host-agent
+      git:
+        repo: https://github.com/guillaumevincent/dci-atomic-host-agent.git
+        dest: /home/centos/dci-atomic-host-agent
+        force: yes
+
+    - name: copy openrc.sh
+      copy:
+        src: openrc.sh
+        dest: /home/centos/dci-atomic-host-agent/openrc.sh
+
+    - name: copy dcirc.sh
+      copy:
+        src: dcirc.sh
+        dest: /home/centos/dci-atomic-host-agent/dcirc.sh
+
+    - name: copy run.sh
+      copy:
+        src: run.sh
+        dest: /home/centos/dci-atomic-host-agent/run.sh
+
+- name: setup jumbox root
+  hosts: jumpbox
+  become: yes
+  become_user: root
+  tasks:
+    - name: install extra packages
+      package:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+        - https://packages.distributed-ci.io/dci-release.el7.noarch.rpm
+        - https://packages.distributed-ci.io/dci-sshpubkeys.el7.noarch.rpm
+        - dci-ansible
+        - git
+        - vim
+        - gcc
+        - python-pip
+        - python-devel
+
+    - name: install python dependencies
+      pip:
+        requirements: /home/centos/dci-atomic-host-agent/requirements.txt
+
+    - name: create cron entry
+      cron:
+        name: "atomic host tests"
+        user: centos
+        minute: "30"
+        hour: "2"
+        job: "/home/centos/dci-atomic-host-agent/run.sh"

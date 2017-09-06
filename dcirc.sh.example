@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+export DCI_CLIENT_ID=''
+export DCI_API_SECRET=''
+export DCI_CS_URL=''
