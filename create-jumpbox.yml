@@ -2,20 +2,15 @@
 - name: check
   hosts: localhost
   tasks:
-    - name: stat dcirc.sh file
-      stat:
-        path: dcirc.sh
-      register: dci_env_file
-
     - name: stat openrc.sh file
       stat:
         path: openrc.sh
       register: openrc
 
-    - name: ensure required env files are defined
+    - name: ensure openrc file is defined
       fail:
         msg: "dcirc.sh file or openrc.sh are required. See README.md"
-      when: (dci_env_file.stat.exists == False) or (openrc.stat.exists == False)
+      when: openrc.stat.exists == False
 
 - name: setup credentials
   hosts: localhost
@@ -91,61 +86,3 @@
       until: result|success
       retries: 10
       delay: 6
-
-- name: setup jumbox centos
-  hosts: jumpbox
-  become: yes
-  become_user: centos
-  tasks:
-    - name: git clone dci-atomic-host-agent
-      git:
-        repo: https://github.com/guillaumevincent/dci-atomic-host-agent.git
-        dest: /home/centos/dci-atomic-host-agent
-        force: yes
-
-    - name: copy openrc.sh
-      copy:
-        src: openrc.sh
-        dest: /home/centos/dci-atomic-host-agent/openrc.sh
-
-    - name: copy dcirc.sh
-      copy:
-        src: dcirc.sh
-        dest: /home/centos/dci-atomic-host-agent/dcirc.sh
-
-    - name: copy run.sh
-      copy:
-        src: run.sh
-        dest: /home/centos/dci-atomic-host-agent/run.sh
-
-- name: setup jumbox root
-  hosts: jumpbox
-  become: yes
-  become_user: root
-  tasks:
-    - name: install extra packages
-      package:
-        name: "{{ item }}"
-        state: present
-      with_items:
-        - https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
-        - https://packages.distributed-ci.io/dci-release.el7.noarch.rpm
-        - https://packages.distributed-ci.io/dci-sshpubkeys.el7.noarch.rpm
-        - dci-ansible
-        - git
-        - vim
-        - gcc
-        - python-pip
-        - python-devel
-
-    - name: install python dependencies
-      pip:
-        requirements: /home/centos/dci-atomic-host-agent/requirements.txt
-
-    - name: create cron entry
-      cron:
-        name: "atomic host tests"
-        user: centos
-        minute: "30"
-        hour: "2"
-        job: "/home/centos/dci-atomic-host-agent/run.sh"

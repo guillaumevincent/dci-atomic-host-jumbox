@@ -1,0 +1,81 @@
+---
+- name: check
+  hosts: localhost
+  tasks:
+    - name: stat remotecirc.sh file
+      stat:
+        path: remotecirc.sh
+      register: dci_remoteci_file
+
+    - name: stat feederrc.sh file
+      stat:
+        path: feederrc.sh
+      register: dci_feeder_file
+
+    - name: stat openrc.sh file
+      stat:
+        path: openrc.sh
+      register: openrc
+
+    - name: ensure required rc files are defined
+      fail:
+        msg: "remotecirc.sh file, feederrc.sh and openrc.sh are required. See README.md"
+      when: (dci_remoteci_file.stat.exists == False) or (dci_feeder_file.stat.exists == False) or (openrc.stat.exists == False)
+
+- name: setup jumbox
+  hosts: all
+  become: yes
+  become_user: root
+  tasks:
+    - name: install extra packages
+      package:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - epel-release
+        - git
+        - vim
+        - gcc
+        - python-pip
+        - python-devel
+
+    - name: install DCI packages
+      package:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - https://packages.distributed-ci.io/dci-release.el7.noarch.rpm
+        - https://packages.distributed-ci.io/dci-sshpubkeys.el7.noarch.rpm
+        - dci-ansible
+
+- name: setup agent
+  hosts: all
+  become: yes
+  become_user: centos
+  tasks:
+    - name: git clone dci-rhel-agent
+      git:
+        repo: https://github.com/guillaumevincent/dci-rhel-agent.git
+        dest: /home/centos/dci-rhel-agent
+        force: yes
+
+    - name: copy openrc.sh in dci-rhel-agent
+      copy:
+        src: openrc.sh
+        dest: /home/centos/dci-rhel-agent/openrc.sh
+
+    - name: copy remotecirc.sh
+      copy:
+        src: remotecirc.sh
+        dest: /home/centos/dci-rhel-agent/dcirc.sh
+
+    - name: git clone dci-rhel-agent
+      git:
+        repo: https://github.com/guillaumevincent/dci-rhel-agent.git
+        dest: /home/centos/dci-rhel-agent
+        force: yes
+
+    - name: copy feederrc.sh
+      copy:
+        src: feederrc.sh
+        dest: /home/centos/dci-rhel-feeder/dcirc.sh
